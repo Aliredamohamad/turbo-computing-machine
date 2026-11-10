@@ -1,0 +1,81 @@
+name: Build and device-test fixed installable APK
+
+on:
+  push:
+    paths:
+      - .github/workflows/fixed-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validated-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract and verify sources
+        run: |
+          base64 --decode NadhifGallery-project.b64 > /tmp/nadhif-source.zip
+          unzip -tq /tmp/nadhif-source.zip
+          unzip -oq /tmp/nadhif-source.zip -d .
+          test -f app/build.gradle
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install SDK tools
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Set new standalone package identity
+        run: |
+          sed -i "s/applicationId 'com.nadhif.gallery'/applicationId 'com.nadhif.gallery.fixed'/" app/build.gradle
+          sed -i "s/versionCode 1/versionCode 2/" app/build.gradle
+          sed -i "s/versionName '1.0.0'/versionName '1.1.0'/" app/build.gradle
+          grep 'applicationId' app/build.gradle
+      - name: Compile release and run unit tests
+        run: gradle :app:assembleRelease :app:testDebugUnitTest --no-daemon --stacktrace
+      - name: Align and sign full universal APK
+        run: |
+          export PATH="$ANDROID_HOME/build-tools/35.0.0:$PATH"
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          zipalign -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          export APKSIGN_PASSWORD="$(openssl rand -hex 22)"
+          keytool -genkeypair -alias nadhif -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Nadhif Gallery, O=Nadhif, C=IQ" -storetype PKCS12 -keystore "$RUNNER_TEMP/nadhif-release.p12" -storepass "$APKSIGN_PASSWORD" -keypass "$APKSIGN_PASSWORD" -noprompt
+          apksigner sign --ks "$RUNNER_TEMP/nadhif-release.p12" --ks-key-alias nadhif --ks-pass env:APKSIGN_PASSWORD --key-pass env:APKSIGN_PASSWORD --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out NadhifGallery-Fixed-v1.1.0.apk aligned.apk
+          zipalign -c -v 4 NadhifGallery-Fixed-v1.1.0.apk
+          apksigner verify --verbose --print-certs --min-sdk-version 29 NadhifGallery-Fixed-v1.1.0.apk
+          aapt dump badging NadhifGallery-Fixed-v1.1.0.apk | head -25
+          unzip -tq NadhifGallery-Fixed-v1.1.0.apk
+          sha256sum NadhifGallery-Fixed-v1.1.0.apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android 16 install and app launch smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            adb install -r NadhifGallery-Fixed-v1.1.0.apk
+            adb shell pm list packages | grep com.nadhif.gallery.fixed
+            adb shell am start -W -n com.nadhif.gallery.fixed/com.nadhif.gallery.MainActivity
+            sleep 7
+            adb shell pidof com.nadhif.gallery.fixed
+            adb logcat -d -s AndroidRuntime:E > runtime-errors.log
+            if grep -q "FATAL EXCEPTION" runtime-errors.log; then cat runtime-errors.log; exit 1; fi
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v1.1.0 NadhifGallery-Fixed-v1.1.0.apk --target "$GITHUB_SHA" --title "NadhifGallery Fixed v1.1.0" --notes "Standalone Android 10-16 universal APK, signed v1/v2/v3 and verified on Android 16 emulator. Uses a new application ID to avoid conflicts with the previous debug build. Signing key for this build is ephemeral; for future upgrades uninstall this version before installing a newly signed build."
