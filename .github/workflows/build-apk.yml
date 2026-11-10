@@ -19,7 +19,7 @@ jobs:
         run: |
           base64 --decode NadhifGallery-project.b64 > /tmp/nadhif-source.zip
           unzip -tq /tmp/nadhif-source.zip
-          unzip -q /tmp/nadhif-source.zip -d .
+          unzip -oq /tmp/nadhif-source.zip -d .
           test -f app/src/main/AndroidManifest.xml
       - uses: actions/setup-java@v4
         with:
