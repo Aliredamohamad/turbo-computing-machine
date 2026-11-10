@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -33,12 +33,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Align compile SDK with Media3 requirements
-        run: sed -i 's/compileSdk 35/compileSdk 36/' app/build.gradle
-      - name: Repair identified Java compilation errors
-        run: |
-          sed -i '/public long pHash;/a\    public long dHash;' app/src/main/java/com/nadhif/gallery/MediaEntry.java
-          sed -i 's/setImmersive(/setVideoFullscreen(/g' app/src/main/java/com/nadhif/gallery/VideoPlayerActivity.java
       - name: Compile APK and run tests
         run: gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
       - name: Verify APK output
@@ -51,3 +45,13 @@ jobs:
           name: NadhifGallery-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Publish direct APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk NadhifGallery-v1.0.0.apk
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 NadhifGallery-v1.0.0.apk --clobber
+          else
+            gh release create v1.0.0 NadhifGallery-v1.0.0.apk --target "$GITHUB_SHA" --title "NadhifGallery v1.0.0" --notes "Arabic Android photo-duplicate cleaner and full-screen image/video viewer."
+          fi
