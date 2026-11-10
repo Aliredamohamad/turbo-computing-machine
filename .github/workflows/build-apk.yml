@@ -35,6 +35,10 @@ jobs:
           gradle-version: '8.13'
       - name: Align compile SDK with Media3 requirements
         run: sed -i 's/compileSdk 35/compileSdk 36/' app/build.gradle
+      - name: Repair identified Java compilation errors
+        run: |
+          sed -i '/public long pHash;/a\    public long dHash;' app/src/main/java/com/nadhif/gallery/MediaEntry.java
+          sed -i 's/setImmersive(/setVideoFullscreen(/g' app/src/main/java/com/nadhif/gallery/VideoPlayerActivity.java
       - name: Compile APK and run tests
         run: gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
       - name: Verify APK output
